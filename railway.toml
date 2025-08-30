@@ -1,0 +1,22 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+numReplicas = 1
+sleepApplication = false
+restartPolicyType = "ON_FAILURE"
+
+[env]
+NODE_ENV = "production"
+PORT = "${{RAILWAY_PORT}}"
+
+[[services]]
+name = "asaas-payment-backend"
+
+[services.source]
+repo = "your-github-username/your-repo-name"
+branch = "main"
+
+[services.variables]
+PORT = "${{RAILWAY_PORT}}"
+NODE_ENV = "production"
