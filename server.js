@@ -24,11 +24,23 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// CORS
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
+// CORS - Configuração para múltiplas origens
+const corsOptions = {
+  origin: [
+    'https://promptaai.com.br',
+    'https://www.promptaai.com.br',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
@@ -39,7 +51,7 @@ connectDB();
 
 // Middleware de log
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.get('origin')}`);
   next();
 });
 
@@ -69,7 +81,15 @@ app.get('/health', async (req, res) => {
 
 // Rota 404
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Rota não encontrada' });
+  res.status(404).json({ 
+    error: 'Rota não encontrada',
+    availableEndpoints: [
+      'GET /health',
+      'POST /api/create-payment',
+      'GET /api/payment-status/:id',
+      'POST /api/webhook/asaas'
+    ]
+  });
 });
 
 // Error handler
@@ -82,10 +102,11 @@ app.use((error, req, res, next) => {
 });
 
 // Iniciar servidor
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`🌍 Ambiente: ${process.env.NODE_ENV}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`📡 CORS habilitado para: ${corsOptions.origin.join(', ')}`);
 });
 
 module.exports = app;
