@@ -11,9 +11,10 @@ const dbConfig = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  // Remover essas opções que causam warning
+  // acquireTimeout: 60000,
+  // timeout: 60000,
+  // reconnect: true
 };
 
 const connectDB = async () => {
@@ -32,44 +33,52 @@ const connectDB = async () => {
 
 const createTables = async () => {
   try {
-    // Tabela de clientes
+    // Tabela de clientes - CORRIGIDA para alinhar com o código
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS customers (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
+        nome VARCHAR(255) NOT NULL,
+        cpf VARCHAR(11) NOT NULL UNIQUE,
         email VARCHAR(255) NOT NULL UNIQUE,
-        cpf VARCHAR(14) NOT NULL UNIQUE,
-        phone VARCHAR(20) NOT NULL,
+        telefone VARCHAR(15) NOT NULL,
+        asaas_customer_id VARCHAR(100) UNIQUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_email (email),
-        INDEX idx_cpf (cpf)
+        INDEX idx_cpf (cpf),
+        INDEX idx_asaas_customer_id (asaas_customer_id)
       )
     `);
 
-    // Tabela de pagamentos
+    // Tabela de pagamentos - CORRIGIDA
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS payments (
         id INT AUTO_INCREMENT PRIMARY KEY,
         customer_id INT NOT NULL,
         asaas_payment_id VARCHAR(255) NOT NULL UNIQUE,
-        asaas_customer_id VARCHAR(255) NOT NULL,
         plan_type ENUM('ESSENCIAL', 'COMPLETO') NOT NULL,
-        amount DECIMAL(10,2) NOT NULL,
         payment_method ENUM('PIX', 'CREDIT_CARD') NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
         status ENUM('PENDING', 'CONFIRMED', 'RECEIVED', 'OVERDUE', 'REFUNDED', 'CANCELLED') DEFAULT 'PENDING',
-        invoice_url TEXT,
-        pix_code TEXT,
-        qr_code_url TEXT,
-        due_date DATE,
-        payment_date TIMESTAMP NULL,
-        webhook_events JSON,
+        external_reference VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (customer_id) REFERENCES customers(id),
         INDEX idx_asaas_payment_id (asaas_payment_id),
         INDEX idx_customer_id (customer_id),
         INDEX idx_status (status)
+      )
+    `);
+
+    // Tabela de erros de pagamento
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS payment_errors (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        error_message TEXT NOT NULL,
+        error_stack TEXT,
+        request_data JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_created_at (created_at)
       )
     `);
 

@@ -2,160 +2,189 @@ const axios = require('axios');
 
 class AsaasService {
   constructor() {
-    this.apiUrl = process.env.ASAAS_API_URL;
     this.apiKey = process.env.ASAAS_API_KEY;
+    this.baseURL = process.env.ASAAS_BASE_URL || 'https://sandbox.asaas.com/api/v3';
     
+    if (!this.apiKey) {
+      console.error('❌ ASAAS_API_KEY não configurada!');
+      throw new Error('ASAAS_API_KEY é obrigatória');
+    }
+
     this.client = axios.create({
-      baseURL: this.apiUrl,
+      baseURL: this.baseURL,
       headers: {
         'access_token': this.apiKey,
         'Content-Type': 'application/json'
       },
       timeout: 30000
     });
+
+    console.log(`✅ AsaasService inicializado: ${this.baseURL}`);
   }
 
-  // Criar ou atualizar cliente no Asaas
-  async createOrUpdateCustomer(customerData) {
+  async createCustomer(customerData) {
     try {
+      console.log('🔄 Criando cliente no Asaas:', customerData);
+
       const payload = {
         name: customerData.name,
+        cpfCnpj: customerData.cpfCnpj,
         email: customerData.email,
-        cpfCnpj: customerData.cpf.replace(/\D/g, ''),
-        phone: customerData.phone.replace(/\D/g, ''),
-        notificationDisabled: false,
-        emailNotification: true,
-        smsNotification: false,
-        whatsappNotification: true
+        phone: customerData.phone,
+        notificationDisabled: false
       };
 
-      // Primeiro tenta buscar cliente existente por CPF
-      const existingCustomer = await this.getCustomerByCpf(payload.cpfCnpj);
+      const response = await this.client.post('/customers', payload);
       
-      if (existingCustomer) {
-        // Atualizar cliente existente
-        const response = await this.client.put(`/customers/${existingCustomer.id}`, payload);
-        return response.data;
-      } else {
-        // Criar novo cliente
-        const response = await this.client.post('/customers', payload);
-        return response.data;
-      }
+      console.log('✅ Cliente criado no Asaas:', response.data.id);
+      return response.data;
+
     } catch (error) {
-      console.error('Erro ao criar/atualizar cliente no Asaas:', error.response?.data || error.message);
-      throw new Error('Erro ao processar cliente no Asaas');
+      console.error('❌ Erro ao criar cliente no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
     }
   }
 
-  // Buscar cliente por CPF
-  async getCustomerByCpf(cpf) {
-    try {
-      const response = await this.client.get('/customers', {
-        params: { cpfCnpj: cpf }
-      });
-      
-      if (response.data.data && response.data.data.length > 0) {
-        return response.data.data[0];
-      }
-      return null;
-    } catch (error) {
-      console.error('Erro ao buscar cliente por CPF:', error.response?.data || error.message);
-      return null;
-    }
-  }
-
-  // Criar cobrança
   async createPayment(paymentData) {
     try {
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 3); // 3 dias para vencimento
+      console.log('🔄 Criando pagamento no Asaas:', paymentData);
 
       const payload = {
-        customer: paymentData.asaasCustomerId,
-        billingType: paymentData.paymentMethod === 'PIX' ? 'PIX' : 'CREDIT_CARD',
-        value: paymentData.amount,
-        dueDate: dueDate.toISOString().split('T')[0],
-        description: `Assinatura ${paymentData.planType} - Automação WhatsApp`,
-        externalReference: `PLAN_${paymentData.planType}_${Date.now()}`,
-        discount: {
-          value: 0,
-          dueDateLimitDays: 0
-        },
-        fine: {
-          value: 2.00,
-          type: 'PERCENTAGE'
-        },
-        interest: {
-          value: 1.00,
-          type: 'PERCENTAGE'
-        },
-        postalService: false,
-        callback: {
-          successUrl: `${process.env.FRONTEND_URL}/success`,
-          autoRedirect: true
-        }
+        customer: paymentData.customer,
+        billingType: paymentData.billingType,
+        value: paymentData.value,
+        dueDate: paymentData.dueDate,
+        description: paymentData.description,
+        externalReference: paymentData.externalReference,
+        installmentCount: paymentData.installmentCount,
+        installmentValue: paymentData.installmentValue,
+        // Configurações específicas para PIX
+        ...(paymentData.billingType === 'PIX' && {
+          pixTransaction: {
+            type: 'DYNAMIC'
+          }
+        })
       };
 
       const response = await this.client.post('/payments', payload);
+      
+      console.log('✅ Pagamento criado no Asaas:', response.data.id);
       return response.data;
+
     } catch (error) {
-      console.error('Erro ao criar cobrança no Asaas:', error.response?.data || error.message);
-      throw new Error('Erro ao criar cobrança no Asaas');
+      console.error('❌ Erro ao criar pagamento no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
     }
   }
 
-  // Obter informações da cobrança
   async getPayment(paymentId) {
     try {
+      console.log('🔄 Buscando pagamento no Asaas:', paymentId);
+
       const response = await this.client.get(`/payments/${paymentId}`);
+      
+      console.log('✅ Pagamento encontrado no Asaas:', response.data.id);
       return response.data;
+
     } catch (error) {
-      console.error('Erro ao buscar cobrança:', error.response?.data || error.message);
-      throw new Error('Erro ao buscar cobrança');
+      console.error('❌ Erro ao buscar pagamento no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
     }
   }
 
-  // Obter código PIX
-  async getPixCode(paymentId) {
+  async getCustomer(customerId) {
     try {
-      const response = await this.client.get(`/payments/${paymentId}/pixQrCode`);
+      console.log('🔄 Buscando cliente no Asaas:', customerId);
+
+      const response = await this.client.get(`/customers/${customerId}`);
+      
+      console.log('✅ Cliente encontrado no Asaas:', response.data.id);
       return response.data;
+
     } catch (error) {
-      console.error('Erro ao obter código PIX:', error.response?.data || error.message);
-      return null;
+      console.error('❌ Erro ao buscar cliente no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
     }
   }
 
-  // Cancelar cobrança
+  async updateCustomer(customerId, customerData) {
+    try {
+      console.log('🔄 Atualizando cliente no Asaas:', customerId);
+
+      const payload = {
+        name: customerData.name,
+        email: customerData.email,
+        phone: customerData.phone
+      };
+
+      const response = await this.client.post(`/customers/${customerId}`, payload);
+      
+      console.log('✅ Cliente atualizado no Asaas:', response.data.id);
+      return response.data;
+
+    } catch (error) {
+      console.error('❌ Erro ao atualizar cliente no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
+    }
+  }
+
   async cancelPayment(paymentId) {
     try {
+      console.log('🔄 Cancelando pagamento no Asaas:', paymentId);
+
       const response = await this.client.delete(`/payments/${paymentId}`);
+      
+      console.log('✅ Pagamento cancelado no Asaas:', paymentId);
       return response.data;
+
     } catch (error) {
-      console.error('Erro ao cancelar cobrança:', error.response?.data || error.message);
-      throw new Error('Erro ao cancelar cobrança');
+      console.error('❌ Erro ao cancelar pagamento no Asaas:', error.response?.data || error.message);
+      
+      if (error.response?.data) {
+        throw new Error(`Asaas Error: ${JSON.stringify(error.response.data)}`);
+      }
+      throw new Error(`Erro na API Asaas: ${error.message}`);
     }
   }
 
-  // Verificar status da cobrança
-  async checkPaymentStatus(paymentId) {
-    try {
-      const payment = await this.getPayment(paymentId);
-      
-      let pixData = null;
-      if (payment.billingType === 'PIX' && payment.status === 'PENDING') {
-        pixData = await this.getPixCode(paymentId);
-      }
-
-      return {
-        ...payment,
-        pixData
-      };
-    } catch (error) {
-      console.error('Erro ao verificar status:', error.response?.data || error.message);
-      throw new Error('Erro ao verificar status da cobrança');
-    }
+  // Validar webhook do Asaas
+  validateWebhook(payload, signature) {
+    // Implementar validação do webhook se necessário
+    return true;
   }
 }
 
-module.exports = new AsaasService();
+// Criar instância única (Singleton)
+const asaasService = new AsaasService();
+
+// Exportar as funções individuais para compatibilidade
+module.exports = {
+  createCustomer: (data) => asaasService.createCustomer(data),
+  createPayment: (data) => asaasService.createPayment(data),
+  getPayment: (id) => asaasService.getPayment(id),
+  getCustomer: (id) => asaasService.getCustomer(id),
+  updateCustomer: (id, data) => asaasService.updateCustomer(id, data),
+  cancelPayment: (id) => asaasService.cancelPayment(id),
+  validateWebhook: (payload, signature) => asaasService.validateWebhook(payload, signature),
+  asaasService // Exportar a instância também
+};
