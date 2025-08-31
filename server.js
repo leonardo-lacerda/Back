@@ -134,10 +134,17 @@ app.use((error, req, res, next) => {
 
 // Iniciar servidor
 app.listen(PORT, '0.0.0.0', () => {
+  const allowedOrigins = [
+    'https://promptaai.com.br',
+    'https://www.promptaai.com.br',
+    'http://localhost:3000',
+    'http://localhost:5173'
+  ];
+  
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`🌍 Ambiente: ${process.env.NODE_ENV}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`📡 CORS habilitado para: ${corsOptions.origin.join(', ')}`);
+  console.log(`📡 CORS habilitado para: ${allowedOrigins.join(', ')}`);
 });
 
 module.exports = app;
