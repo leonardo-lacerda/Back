@@ -26,21 +26,41 @@ app.use('/api/', limiter);
 
 // CORS - Configuração para múltiplas origens
 const corsOptions = {
-  origin: [
-    'https://promptaai.com.br',
-    'https://www.promptaai.com.br',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173'
-  ],
+  origin: function (origin, callback) {
+    // Permitir requisições sem origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'https://promptaai.com.br',
+      'https://www.promptaai.com.br',
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5173'
+    ];
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log(`❌ Origem bloqueada pelo CORS: ${origin}`);
+      callback(new Error('Não permitido pelo CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 };
 
 app.use(cors(corsOptions));
+
+// Middleware adicional para debug de CORS
+app.use((req, res, next) => {
+  console.log(`🌍 ${req.method} ${req.path} - Origin: ${req.get('origin') || 'sem origin'}`);
+  console.log(`📋 Headers: ${JSON.stringify(req.headers)}`);
+  next();
+});
 
 // Body parser
 app.use(express.json({ limit: '10mb' }));
@@ -78,6 +98,17 @@ app.get('/health', async (req, res) => {
     });
   }
 });
+
+// Rota de teste CORS
+app.get('/test-cors', (req, res) => {
+  res.json({
+    message: 'CORS funcionando!',
+    origin: req.get('origin'),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.options('*', cors(corsOptions)); // Habilita preflight para todas as rotas
 
 // Rota 404
 app.use('*', (req, res) => {

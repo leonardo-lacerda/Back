@@ -332,4 +332,9 @@ router.get('/payments', async (req, res) => {
   }
 });
 
+// Alias para compatibilidade (create-subscription → create-payment)
+router.post('/create-subscription', router.stack.find(layer => 
+  layer.route && layer.route.path === '/create-payment'
+).route.stack[0].handle);
+
 module.exports = router;
