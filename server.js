@@ -9,7 +9,7 @@ const webhookRoutes = require('./routes/webhook');
 const { connectDB, testConnection } = require('./config/database');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 // Conectar ao banco de dados primeiro
 connectDB();
