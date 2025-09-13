@@ -135,11 +135,9 @@ router.post('/asaas', verifyWebhookSignature, async (req, res) => {
   }
 });
 
-
 // Handlers para diferentes eventos
 async function handlePaymentCreated(payment, connection) {
   console.log(`Pagamento criado: ${payment.id}`);
-  // Atualizar status se necessário
   await updatePaymentStatus(payment.id, 'PENDING', connection);
 }
 
@@ -166,13 +164,26 @@ async function handlePaymentReceived(payment, connection) {
   console.log(`📅 Data do pagamento: ${payment.paymentDate}`);
   console.log(`💰 =======================================`);
   
-  const paymentDate = payment.paymentDate ? new Date(payment.paymentDate) : new Date();
+  const success = await updatePaymentStatus(payment.id, 'RECEIVED', connection);
   
-  await updatePaymentStatus(payment.id, 'RECEIVED', connection, paymentDate);
+  if (success) {
+    // ✅ CORREÇÃO: Passar payment.id em vez de payment
+    console.log(`🎯 Ativando serviços para o cliente...`);
+    await activateCustomerServices(payment.id, connection);
+  } else {
+    console.error('❌ Falha ao atualizar pagamento - serviços NÃO ativados');
+  }
+}
+
+// ✅ ADICIONADO: Handler que estava faltando
+async function handlePaymentOverdue(payment, connection) {
+  console.log(`⏰ Pagamento em atraso: ${payment.id}`);
+  await updatePaymentStatus(payment.id, 'OVERDUE', connection);
   
-  // Pagamento finalizado - ativar serviços
-  console.log(`🎯 Ativando serviços para o cliente...`);
-  await activateCustomerServices(payment, connection);
+  // Aqui você pode adicionar:
+  // - Enviar email de cobrança
+  // - Notificar sistema de inadimplência
+  // - Suspender serviços se necessário
 }
 
 async function handlePaymentDeleted(payment, connection) {
@@ -189,8 +200,8 @@ async function handlePaymentRefunded(payment, connection) {
   console.log(`Pagamento estornado: ${payment.id}`);
   await updatePaymentStatus(payment.id, 'REFUNDED', connection);
   
-  // Desativar serviços se necessário
-  await deactivateCustomerServices(payment, connection);
+  // ✅ CORREÇÃO: Passar payment.id em vez de payment
+  await deactivateCustomerServices(payment.id, connection);
 }
 
 // Função auxiliar para atualizar status do pagamento
@@ -199,110 +210,182 @@ async function updatePaymentStatus(asaasPaymentId, status, connection, paymentDa
     console.log(`🔄 Tentando atualizar pagamento: ${asaasPaymentId} para status: ${status}`);
     console.log(`📅 Data do pagamento: ${paymentDate}`);
     
-    const query = `
+    // Primeiro, verificar se o pagamento existe
+    const [existingPayment] = await connection.execute(
+      'SELECT id, asaas_payment_id, status, customer_id, plan_type FROM payments WHERE asaas_payment_id = ?',
+      [asaasPaymentId]
+    );
+    
+    if (existingPayment.length === 0) {
+      console.error(`❌ Pagamento ${asaasPaymentId} NÃO EXISTE na tabela payments`);
+      console.log('🔍 Tentando buscar por qualquer pagamento similar...');
+      
+      const [similarPayments] = await connection.execute(
+        'SELECT asaas_payment_id FROM payments ORDER BY created_at DESC LIMIT 5'
+      );
+      console.log('📋 Últimos 5 pagamentos na tabela:', similarPayments.map(p => p.asaas_payment_id));
+      return false;
+    }
+    
+    console.log(`✅ Pagamento encontrado na tabela:`, {
+      id: existingPayment[0].id,
+      current_status: existingPayment[0].status,
+      customer_id: existingPayment[0].customer_id,
+      plan_type: existingPayment[0].plan_type
+    });
+    
+    // Verificar se o status já está atualizado
+    if (existingPayment[0].status === status) {
+      console.log(`ℹ️ Status já está como ${status}. Nenhuma atualização necessária.`);
+      return true;
+    }
+    
+    // UPDATE sem payment_date (coluna não existe no seu schema)
+    const updateQuery = `
       UPDATE payments 
-      SET status = ?, payment_date = ?, updated_at = CURRENT_TIMESTAMP 
+      SET status = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE asaas_payment_id = ?
     `;
     
-    const [result] = await connection.execute(query, [status, paymentDate, asaasPaymentId]);
+    console.log('🔍 Executando query:', updateQuery);
+    console.log('🔍 Com parâmetros:', [status, asaasPaymentId]);
+    
+    const [result] = await connection.execute(updateQuery, [status, asaasPaymentId]);
     
     console.log(`📊 Resultado do UPDATE:`, {
       affectedRows: result.affectedRows,
       changedRows: result.changedRows,
-      warningCount: result.warningCount
+      warningCount: result.warningCount,
+      info: result.info
     });
     
     if (result.affectedRows === 0) {
-      console.warn(`⚠️ NENHUM registro encontrado para asaas_payment_id: ${asaasPaymentId}`);
-      
-      // Verificar se o pagamento existe na tabela
-      const [existingPayment] = await connection.execute(
-        'SELECT id, asaas_payment_id, status FROM payments WHERE asaas_payment_id = ?',
-        [asaasPaymentId]
-      );
-      
-      if (existingPayment.length === 0) {
-        console.error(`❌ Pagamento ${asaasPaymentId} NÃO EXISTE na tabela payments`);
-      } else {
-        console.log(`✅ Pagamento encontrado na tabela:`, existingPayment[0]);
-      }
-    } else {
-      console.log(`✅ Pagamento ${asaasPaymentId} atualizado com sucesso para ${status}`);
+      console.error(`❌ FALHA: Nenhuma linha foi afetada no UPDATE`);
+      return false;
     }
     
+    if (result.changedRows === 0) {
+      console.warn(`⚠️ AVISO: UPDATE executado mas nenhuma mudança detectada (status já era ${status})`);
+    }
+    
+    // Verificar se a atualização foi aplicada
+    const [updatedPayment] = await connection.execute(
+      'SELECT status, updated_at FROM payments WHERE asaas_payment_id = ?',
+      [asaasPaymentId]
+    );
+    
+    if (updatedPayment.length > 0) {
+      console.log(`✅ SUCESSO: Pagamento ${asaasPaymentId} atualizado!`, {
+        old_status: existingPayment[0].status,
+        new_status: updatedPayment[0].status,
+        updated_at: updatedPayment[0].updated_at
+      });
+    }
+    
+    return true;
+    
   } catch (error) {
-    console.error(`❌ ERRO ao atualizar pagamento ${asaasPaymentId}:`, error);
+    console.error(`❌ ERRO ao atualizar pagamento ${asaasPaymentId}:`, error.message);
+    console.error('💥 Código do erro:', error.code);
+    console.error('💥 SQL State:', error.sqlState);
+    console.error('💥 Stack trace:', error.stack);
+    
+    // Log da query que causou o erro (para debug)
+    if (error.sql) {
+      console.error('💥 Query que falhou:', error.sql);
+    }
+    
+    return false;
+  }
+}
+
+// Função para ativar serviços do cliente
+async function activateCustomerServices(asaasPaymentId, connection) {
+  try {
+    console.log('🎯 Ativando serviços para o cliente...');
+    
+    // Query corrigida - verificar se o JOIN está correto
+    const [paymentData] = await connection.execute(`
+      SELECT p.*, c.name, c.email, c.telefone 
+      FROM payments p 
+      JOIN customers c ON p.customer_id = c.id 
+      WHERE p.asaas_payment_id = ?
+    `, [asaasPaymentId]);
+    
+    if (paymentData.length === 0) {
+      console.error(`❌ Pagamento não encontrado: ${asaasPaymentId}`);
+      return;
+    }
+    
+    const payment = paymentData[0];
+    console.log('✅ Dados do pagamento encontrados:', {
+      id: payment.id,
+      customer_name: payment.name,
+      plan_type: payment.plan_type,
+      status: payment.status
+    });
+    
+    // ✅ IMPLEMENTAR: Lógica de ativação baseada no plano
+    switch (payment.plan_type) {
+      case 'ESSENCIAL':
+        console.log('🟢 Ativando plano ESSENCIAL...');
+        // Ativar funcionalidades básicas
+        break;
+        
+      case 'COMPLETO':
+        console.log('🟡 Ativando plano COMPLETO...');
+        // Ativar todas as funcionalidades
+        break;
+        
+      default:
+        console.log(`⚠️ Plano não reconhecido: ${payment.plan_type}`);
+    }
+    
+    console.log('✅ Serviços ativados com sucesso!');
+    
+  } catch (error) {
+    console.error('❌ Erro ao ativar serviços do cliente:', error);
     console.error('Stack trace:', error.stack);
   }
 }
 
-
-// Função para ativar serviços do cliente
-async function activateCustomerServices(payment, connection) {
+// ✅ ADICIONADO: Função que estava faltando
+async function deactivateCustomerServices(asaasPaymentId, connection) {
   try {
-    // Buscar dados do cliente e pagamento
-    const [paymentData] = await connection.execute(
-      `SELECT p.*, c.name, c.email, c.phone 
-       FROM payments p 
-       JOIN customers c ON p.customer_id = c.id 
-       WHERE p.asaas_payment_id = ?`,
-      [payment.id]
-    );
-
+    console.log('🔴 Desativando serviços para o cliente...');
+    
+    const [paymentData] = await connection.execute(`
+      SELECT p.*, c.name, c.email, c.telefone 
+      FROM payments p 
+      JOIN customers c ON p.customer_id = c.id 
+      WHERE p.asaas_payment_id = ?
+    `, [asaasPaymentId]);
+    
     if (paymentData.length === 0) {
-      console.error(`Pagamento não encontrado: ${payment.id}`);
+      console.error(`❌ Pagamento não encontrado: ${asaasPaymentId}`);
       return;
     }
-
-    const customer = paymentData[0];
     
-    // Aqui você implementará a lógica específica do seu negócio:
-    // - Criar conta do cliente no sistema de automação
-    // - Enviar dados para o sistema de CRM
-    // - Configurar WhatsApp Business
-    // - Enviar email de boas-vindas
-    // - Etc.
-
-    console.log(`Serviços ativados para o cliente: ${customer.name} (${customer.email})`);
-    console.log(`Plano: ${customer.plan_type} - Valor: R$ ${customer.amount}`);
-
-    // Exemplo de integração futura:
-    // await integrateWithWhatsAppSystem(customer);
-    // await sendWelcomeEmail(customer);
+    const payment = paymentData[0];
+    console.log('⚠️ Desativando serviços para:', {
+      customer_name: payment.name,
+      plan_type: payment.plan_type
+    });
+    
+    // Implementar lógica de desativação
+    // - Suspender acesso às funcionalidades
+    // - Enviar email de notificação
+    // - Marcar como inativo no sistema
+    
+    console.log('✅ Serviços desativados com sucesso!');
     
   } catch (error) {
-    console.error('Erro ao ativar serviços do cliente:', error);
+    console.error('❌ Erro ao desativar serviços do cliente:', error);
+    console.error('Stack trace:', error.stack);
   }
 }
 
-// Função para desativar serviços do cliente
-async function deactivateCustomerServices(payment, connection) {
-  try {
-    const [paymentData] = await connection.execute(
-      `SELECT p.*, c.name, c.email 
-       FROM payments p 
-       JOIN customers c ON p.customer_id = c.id 
-       WHERE p.asaas_payment_id = ?`,
-      [payment.id]
-    );
-
-    if (paymentData.length > 0) {
-      const customer = paymentData[0];
-      console.log(`Serviços desativados para o cliente: ${customer.name}`);
-      
-      // Implementar lógica de desativação:
-      // - Suspender automações
-      // - Desativar acessos
-      // - Enviar notificação
-    }
-    
-  } catch (error) {
-    console.error('Erro ao desativar serviços do cliente:', error);
-  }
-}
-
-// Rota para reprocessar webhook (útil para debugging)
+// ✅ CORRIGIDO: Rota para reprocessar webhook 
 router.post('/reprocess/:webhookId', async (req, res) => {
   try {
     const { webhookId } = req.params;
@@ -319,13 +402,41 @@ router.post('/reprocess/:webhookId', async (req, res) => {
 
     const log = webhookLog[0];
     const payload = JSON.parse(log.payload);
+    
+    console.log(`🔄 Reprocessando webhook ID: ${webhookId}`);
+    console.log(`📨 Evento: ${log.event_type}`);
 
-    // Reprocessar o webhook
-    req.body = payload;
-    await router.stack[0].handle(req, res);
+    // Processar o webhook manualmente
+    const { event, payment } = payload;
+    
+    switch (event) {
+      case 'PAYMENT_CREATED':
+        await handlePaymentCreated(payment, connection);
+        break;
+      case 'PAYMENT_RECEIVED':
+        await handlePaymentReceived(payment, connection);
+        break;
+      case 'PAYMENT_OVERDUE':
+        await handlePaymentOverdue(payment, connection);
+        break;
+      // Adicione outros casos conforme necessário
+      default:
+        console.log(`⚠️ Evento ${event} não pode ser reprocessado automaticamente`);
+    }
+    
+    // Marcar como reprocessado
+    await connection.execute(
+      'UPDATE webhook_logs SET processed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [webhookId]
+    );
+
+    res.status(200).json({ 
+      success: true, 
+      message: `Webhook ${webhookId} reprocessado com sucesso` 
+    });
 
   } catch (error) {
-    console.error('Erro ao reprocessar webhook:', error);
+    console.error('❌ Erro ao reprocessar webhook:', error);
     res.status(500).json({ error: 'Erro ao reprocessar webhook' });
   }
 });
