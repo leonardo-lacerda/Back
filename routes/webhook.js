@@ -6,26 +6,35 @@ const router = express.Router();
 
 // Middleware para verificar assinatura do webhook (se configurado)
 const verifyWebhookSignature = (req, res, next) => {
-  if (!process.env.ASAAS_WEBHOOK_SECRET) {
-    return next(); // Pular verificação se não houver secret configurado
+  // Verificação mais rigorosa
+  const webhookSecret = process.env.ASAAS_WEBHOOK_SECRET;
+  
+  if (!webhookSecret || webhookSecret === '' || webhookSecret === 'your_webhook_secret_here') {
+    console.log('🔓 Verificação de assinatura desabilitada');
+    return next(); // Pular verificação
   }
 
+  console.log('🔒 Verificando assinatura do webhook...');
+  
   const signature = req.headers['asaas-signature'];
   if (!signature) {
+    console.log('❌ Header asaas-signature não encontrado');
     return res.status(401).json({ error: 'Assinatura do webhook não encontrada' });
   }
 
   try {
     const payload = JSON.stringify(req.body);
     const expectedSignature = crypto
-      .createHmac('sha256', process.env.ASAAS_WEBHOOK_SECRET)
+      .createHmac('sha256', webhookSecret)
       .update(payload)
       .digest('hex');
 
     if (signature !== expectedSignature) {
+      console.log('❌ Assinatura inválida');
       return res.status(401).json({ error: 'Assinatura inválida' });
     }
 
+    console.log('✅ Assinatura verificada com sucesso');
     next();
   } catch (error) {
     console.error('Erro ao verificar assinatura do webhook:', error);
