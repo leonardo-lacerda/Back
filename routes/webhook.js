@@ -45,6 +45,13 @@ const verifyWebhookSignature = (req, res, next) => {
 // Webhook do Asaas
 router.post('/asaas', verifyWebhookSignature, async (req, res) => {
   try {
+    console.log('🎯 ===== WEBHOOK RECEBIDO =====');
+    console.log('📨 Evento:', req.body.event);
+    console.log('💳 Payment ID:', req.body.payment?.id);
+    console.log('📊 Status do pagamento:', req.body.payment?.status);
+    console.log('💰 Valor:', req.body.payment?.value);
+    console.log('🎯 =============================');
+
     const { event, payment } = req.body;
     const connection = getConnection();
 
@@ -57,39 +64,47 @@ router.post('/asaas', verifyWebhookSignature, async (req, res) => {
     // Processar diferentes tipos de eventos
     switch (event) {
       case 'PAYMENT_CREATED':
+        console.log('🔄 Processando: PAYMENT_CREATED');
         await handlePaymentCreated(payment, connection);
         break;
       
       case 'PAYMENT_AWAITING_CONFIRMATION':
+        console.log('🔄 Processando: PAYMENT_AWAITING_CONFIRMATION');
         await handlePaymentAwaitingConfirmation(payment, connection);
         break;
       
       case 'PAYMENT_CONFIRMED':
+        console.log('🔄 Processando: PAYMENT_CONFIRMED');
         await handlePaymentConfirmed(payment, connection);
         break;
       
       case 'PAYMENT_RECEIVED':
+        console.log('🔄 Processando: PAYMENT_RECEIVED');
         await handlePaymentReceived(payment, connection);
         break;
       
       case 'PAYMENT_OVERDUE':
+        console.log('🔄 Processando: PAYMENT_OVERDUE');
         await handlePaymentOverdue(payment, connection);
         break;
       
       case 'PAYMENT_DELETED':
+        console.log('🔄 Processando: PAYMENT_DELETED');
         await handlePaymentDeleted(payment, connection);
         break;
       
       case 'PAYMENT_RESTORED':
+        console.log('🔄 Processando: PAYMENT_RESTORED');
         await handlePaymentRestored(payment, connection);
         break;
       
       case 'PAYMENT_REFUNDED':
+        console.log('🔄 Processando: PAYMENT_REFUNDED');
         await handlePaymentRefunded(payment, connection);
         break;
       
       default:
-        console.log(`Evento não tratado: ${event}`);
+        console.log(`⚠️ Evento não tratado: ${event}`);
     }
 
     // Marcar webhook como processado
@@ -98,21 +113,28 @@ router.post('/asaas', verifyWebhookSignature, async (req, res) => {
       [payment?.id || null, event]
     );
 
+    console.log('✅ Webhook processado com sucesso!');
     res.status(200).json({ success: true, message: 'Webhook processado' });
 
   } catch (error) {
-    console.error('Erro ao processar webhook:', error);
+    console.error('❌ ERRO CRÍTICO no webhook:', error);
+    console.error('Stack trace:', error.stack);
     
     // Log do erro
-    const connection = getConnection();
-    await connection.execute(
-      'UPDATE webhook_logs SET error_message = ? WHERE payment_id = ? ORDER BY created_at DESC LIMIT 1',
-      [error.message, req.body.payment?.id || null]
-    );
+    try {
+      const connection = getConnection();
+      await connection.execute(
+        'UPDATE webhook_logs SET error_message = ? WHERE payment_id = ? ORDER BY created_at DESC LIMIT 1',
+        [error.message, req.body.payment?.id || null]
+      );
+    } catch (logError) {
+      console.error('❌ Erro ao salvar log de erro:', logError);
+    }
 
     res.status(500).json({ error: 'Erro ao processar webhook' });
   }
 });
+
 
 // Handlers para diferentes eventos
 async function handlePaymentCreated(payment, connection) {
@@ -137,21 +159,20 @@ async function handlePaymentConfirmed(payment, connection) {
 }
 
 async function handlePaymentReceived(payment, connection) {
-  console.log(`Pagamento recebido: ${payment.id}`);
-  await updatePaymentStatus(payment.id, 'RECEIVED', connection, new Date());
+  console.log(`💰 === PROCESSANDO PAGAMENTO RECEBIDO ===`);
+  console.log(`💳 ID: ${payment.id}`);
+  console.log(`📊 Status: ${payment.status}`);
+  console.log(`💵 Valor: R$ ${payment.value}`);
+  console.log(`📅 Data do pagamento: ${payment.paymentDate}`);
+  console.log(`💰 =======================================`);
+  
+  const paymentDate = payment.paymentDate ? new Date(payment.paymentDate) : new Date();
+  
+  await updatePaymentStatus(payment.id, 'RECEIVED', connection, paymentDate);
   
   // Pagamento finalizado - ativar serviços
+  console.log(`🎯 Ativando serviços para o cliente...`);
   await activateCustomerServices(payment, connection);
-}
-
-async function handlePaymentOverdue(payment, connection) {
-  console.log(`Pagamento vencido: ${payment.id}`);
-  await updatePaymentStatus(payment.id, 'OVERDUE', connection);
-  
-  // Aqui você pode adicionar lógica para:
-  // - Enviar notificação de vencimento
-  // - Suspender serviços
-  // - Criar nova cobrança
 }
 
 async function handlePaymentDeleted(payment, connection) {
@@ -175,16 +196,47 @@ async function handlePaymentRefunded(payment, connection) {
 // Função auxiliar para atualizar status do pagamento
 async function updatePaymentStatus(asaasPaymentId, status, connection, paymentDate = null) {
   try {
+    console.log(`🔄 Tentando atualizar pagamento: ${asaasPaymentId} para status: ${status}`);
+    console.log(`📅 Data do pagamento: ${paymentDate}`);
+    
     const query = `
       UPDATE payments 
       SET status = ?, payment_date = ?, updated_at = CURRENT_TIMESTAMP 
       WHERE asaas_payment_id = ?
     `;
-    await connection.execute(query, [status, paymentDate, asaasPaymentId]);
+    
+    const [result] = await connection.execute(query, [status, paymentDate, asaasPaymentId]);
+    
+    console.log(`📊 Resultado do UPDATE:`, {
+      affectedRows: result.affectedRows,
+      changedRows: result.changedRows,
+      warningCount: result.warningCount
+    });
+    
+    if (result.affectedRows === 0) {
+      console.warn(`⚠️ NENHUM registro encontrado para asaas_payment_id: ${asaasPaymentId}`);
+      
+      // Verificar se o pagamento existe na tabela
+      const [existingPayment] = await connection.execute(
+        'SELECT id, asaas_payment_id, status FROM payments WHERE asaas_payment_id = ?',
+        [asaasPaymentId]
+      );
+      
+      if (existingPayment.length === 0) {
+        console.error(`❌ Pagamento ${asaasPaymentId} NÃO EXISTE na tabela payments`);
+      } else {
+        console.log(`✅ Pagamento encontrado na tabela:`, existingPayment[0]);
+      }
+    } else {
+      console.log(`✅ Pagamento ${asaasPaymentId} atualizado com sucesso para ${status}`);
+    }
+    
   } catch (error) {
-    console.error(`Erro ao atualizar status do pagamento ${asaasPaymentId}:`, error);
+    console.error(`❌ ERRO ao atualizar pagamento ${asaasPaymentId}:`, error);
+    console.error('Stack trace:', error.stack);
   }
 }
+
 
 // Função para ativar serviços do cliente
 async function activateCustomerServices(payment, connection) {
