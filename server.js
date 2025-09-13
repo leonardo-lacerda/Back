@@ -126,9 +126,29 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (req, res) => {
+  console.log('🏠 Health check Railway - rota raiz acessada');
+  
+  // Resposta rápida sem dependências externas
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-cache');
+  
+  return res.status(200).json({
+    status: 'OK',
+    message: 'Servidor funcionando',
+    timestamp: new Date().toISOString(),
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    service: 'Backend API - PromptaAI'
+  });
+});
+
+
 // Rotas
 app.use('/api', paymentRoutes);
 app.use('/api/webhook', webhookRoutes);
+
+
 
 // Rota de health check
 app.get('/health', async (req, res) => {
