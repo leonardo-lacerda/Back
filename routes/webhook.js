@@ -304,50 +304,137 @@ async function activateCustomerServices(asaasPaymentId, connection) {
   try {
     console.log('🎯 Ativando serviços para o cliente...');
     
-    // Query corrigida - verificar se o JOIN está correto
-    const [paymentData] = await connection.execute(`
-      SELECT p.*, c.name, c.email, c.telefone 
-      FROM payments p 
-      JOIN customers c ON p.customer_id = c.id 
-      WHERE p.asaas_payment_id = ?
-    `, [asaasPaymentId]);
+    // Debug: verificar estrutura da tabela
+    await debugTableStructure(connection);
     
-    if (paymentData.length === 0) {
-      console.error(`❌ Pagamento não encontrado: ${asaasPaymentId}`);
+    // Tentar diferentes variações do nome da coluna
+    let query = '';
+    let queryVariations = [
+      // Variação 1: usando 'name'
+      `SELECT p.*, c.name, c.email, c.telefone 
+       FROM payments p 
+       JOIN customers c ON p.customer_id = c.id 
+       WHERE p.asaas_payment_id = ?`,
+       
+      // Variação 2: usando 'nome' 
+      `SELECT p.*, c.nome, c.email, c.telefone 
+       FROM payments p 
+       JOIN customers c ON p.customer_id = c.id 
+       WHERE p.asaas_payment_id = ?`,
+       
+      // Variação 3: sem o campo name/nome (mais seguro)
+      `SELECT p.*, c.email, c.telefone, c.cpf, c.asaas_customer_id
+       FROM payments p 
+       JOIN customers c ON p.customer_id = c.id 
+       WHERE p.asaas_payment_id = ?`
+    ];
+    
+    let paymentData = null;
+    let usedQuery = '';
+    
+    // Tentar cada variação até uma funcionar
+    for (let i = 0; i < queryVariations.length; i++) {
+      try {
+        console.log(`🔍 Tentando query variação ${i + 1}:`, queryVariations[i]);
+        
+        const [result] = await connection.execute(queryVariations[i], [asaasPaymentId]);
+        
+        if (result.length > 0) {
+          paymentData = result;
+          usedQuery = queryVariations[i];
+          console.log(`✅ Query variação ${i + 1} funcionou!`);
+          break;
+        }
+        
+      } catch (queryError) {
+        console.log(`❌ Query variação ${i + 1} falhou:`, queryError.message);
+        continue;
+      }
+    }
+    
+    if (!paymentData || paymentData.length === 0) {
+      console.error(`❌ Pagamento não encontrado com nenhuma variação da query: ${asaasPaymentId}`);
       return;
     }
     
     const payment = paymentData[0];
     console.log('✅ Dados do pagamento encontrados:', {
       id: payment.id,
-      customer_name: payment.name,
+      customer_name: payment.name || payment.nome || 'Nome não disponível',
+      customer_email: payment.email,
+      customer_phone: payment.telefone,
       plan_type: payment.plan_type,
       status: payment.status
     });
     
-    // ✅ IMPLEMENTAR: Lógica de ativação baseada no plano
+    // Lógica de ativação baseada no plano
+    console.log(`🚀 Ativando plano: ${payment.plan_type}`);
+    
     switch (payment.plan_type) {
       case 'ESSENCIAL':
-        console.log('🟢 Ativando plano ESSENCIAL...');
-        // Ativar funcionalidades básicas
+        console.log('🟢 Ativando funcionalidades do plano ESSENCIAL...');
+        // Aqui você implementa a lógica específica do plano ESSENCIAL
+        // Exemplo: ativar funcionalidades básicas
+        await activateEssentialPlan(payment, connection);
         break;
         
       case 'COMPLETO':
-        console.log('🟡 Ativando plano COMPLETO...');
-        // Ativar todas as funcionalidades
+        console.log('🟡 Ativando funcionalidades do plano COMPLETO...');
+        // Aqui você implementa a lógica específica do plano COMPLETO
+        // Exemplo: ativar todas as funcionalidades
+        await activateCompletePlan(payment, connection);
         break;
         
       default:
         console.log(`⚠️ Plano não reconhecido: ${payment.plan_type}`);
+        console.log('📝 Aplicando configurações padrão...');
     }
     
     console.log('✅ Serviços ativados com sucesso!');
     
   } catch (error) {
     console.error('❌ Erro ao ativar serviços do cliente:', error);
-    console.error('Stack trace:', error.stack);
+    console.error('💥 Stack trace:', error.stack);
   }
 }
+
+// Funções auxiliares para cada tipo de plano
+async function activateEssentialPlan(payment, connection) {
+  try {
+    console.log('🔧 Configurando plano ESSENCIAL...');
+    
+    // Exemplo: inserir configurações específicas
+    await connection.execute(`
+      INSERT INTO customer_features (customer_id, feature_name, is_active, created_at) 
+      VALUES (?, 'basic_features', TRUE, NOW())
+      ON DUPLICATE KEY UPDATE is_active = TRUE, updated_at = NOW()
+    `, [payment.customer_id]);
+    
+    console.log('✅ Plano ESSENCIAL ativado!');
+    
+  } catch (error) {
+    console.error('❌ Erro ao ativar plano ESSENCIAL:', error);
+  }
+}
+
+async function activateCompletePlan(payment, connection) {
+  try {
+    console.log('🔧 Configurando plano COMPLETO...');
+    
+    // Exemplo: inserir configurações específicas
+    await connection.execute(`
+      INSERT INTO customer_features (customer_id, feature_name, is_active, created_at) 
+      VALUES (?, 'premium_features', TRUE, NOW())
+      ON DUPLICATE KEY UPDATE is_active = TRUE, updated_at = NOW()
+    `, [payment.customer_id]);
+    
+    console.log('✅ Plano COMPLETO ativado!');
+    
+  } catch (error) {
+    console.error('❌ Erro ao ativar plano COMPLETO:', error);
+  }
+}
+
 
 // ✅ ADICIONADO: Função que estava faltando
 async function deactivateCustomerServices(asaasPaymentId, connection) {

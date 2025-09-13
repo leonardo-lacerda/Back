@@ -93,6 +93,8 @@ app.use(helmet({
   contentSecurityPolicy: false // Desabilitar CSP que pode interferir
 }));
 
+app.set('trust proxy', true);
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
