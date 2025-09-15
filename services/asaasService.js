@@ -3,7 +3,7 @@ const axios = require('axios');
 class AsaasService {
   constructor() {
     this.apiKey = process.env.ASAAS_API_KEY;
-    this.baseURL = process.env.ASAAS_BASE_URL || 'https://sandbox.asaas.com/api/v3';
+    this.baseURL = process.env.ASAAS_BASE_URL || 'https://api.asaas.com/v3';
     
     if (!this.apiKey) {
       console.error('❌ ASAAS_API_KEY não configurada!');
